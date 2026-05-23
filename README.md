@@ -2,13 +2,40 @@
 
 Research code for **time-series entity-aware conditional diffusion for local traffic-scenario synthesis**, with downstream lane-change prediction under a **Train-on-Synthetic Test-on-Real (TSTR)** protocol.
 
-This repository implements the thesis pipeline from raw microscopic NGSIM trajectories to fixed-slot diffusion sequences, synthetic traffic generation, deterministic downstream feature derivation, and utility-based classifier evaluation. The central research question is whether a structured conditional diffusion model can synthesize local highway traffic sequences that remain useful for real-data lane-change prediction.
+This repository implements the thesis pipeline from raw microscopic NGSIM trajectories to fixed-slot diffusion sequences, synthetic traffic generation, deterministic downstream feature derivation, and utility-based classifier evaluation. The core research question is whether a **structured conditional diffusion model** can synthesize **local highway traffic sequences** that remain useful for **real-data lane-change prediction**.
+
+The implementation follows the thesis *Time-series Entity-Aware Conditional Diffusion for Traffic Data Synthesis to predict vehicle lane-change* by Mohamed Abdelaziz, with the strongest alignment to:
+
+- **Problem formulation and representations:** Sections **3.1.1–3.1.4**
+- **Data and feature engineering:** Sections **3.2.1–3.2.6**
+- **Structured conditional diffusion model:** Sections **3.3.1–3.3.5**
+- **Downstream TSTR/TRTR evaluation:** Sections **3.4**, **4.2**, **4.5**, **4.7**
+- **Main reported results:** Sections **5.1–5.3**
+
+---
+
+## 1) End-to-end overview
+
+The project is organized around a two-stage workflow: first generate synthetic fixed-slot traffic windows in diffusion space, then evaluate them through downstream lane-change prediction in a richer derived feature space.
 
 ![End-to-end training and evaluation pipeline](docs/assets/pipeline.png)
 
-## Thesis alignment
+The higher-level stage view is:
 
-The repository follows the thesis *Time-series Entity-Aware Conditional Diffusion for Traffic Data Synthesis to predict vehicle lane-change* by Mohamed Abdelaziz. The implementation is especially aligned with:
+![Pipeline stages](docs/assets/pipeline-stages.png)
+
+### What the repository does
+
+1. **Preprocess NGSIM trajectories** with interpolation, smoothing, and kinematic recomputation.
+2. **Construct fixed-slot local scenarios** centered on an ego vehicle.
+3. **Train a class-conditional diffusion model** over the compact diffusion-space representation.
+4. **Generate synthetic traffic sequences** and enforce structural consistency.
+5. **Map real or synthetic sequences to downstream features**.
+6. **Train lane-change classifiers** and evaluate under **TRTR** and **TSTR** protocols.
+
+---
+
+## 2) Thesis alignment
 
 | Repository area | Thesis reference | What is implemented |
 |---|---|---|
@@ -23,17 +50,17 @@ The repository follows the thesis *Time-series Entity-Aware Conditional Diffusio
 
 For a more detailed mapping, see [`docs/THESIS_ALIGNMENT.md`](docs/THESIS_ALIGNMENT.md).
 
-## Model snapshots
+---
 
-The model is organized around a compact local traffic state and a factorized conditional denoiser. These snapshots are intentionally kept in the README because they explain the core design without requiring the reader to inspect the paper first.
+## 3) State representation and feature spaces
 
-### Fixed-slot traffic state
+### 3.1 Fixed-slot diffusion-space representation
 
-Each frame is encoded as ego velocity plus six semantically ordered neighbor slots. Missing neighbors are represented by `(dx=0, dy=0, p=0)`.
+Each frame is encoded as ego velocity plus six semantically ordered neighboring slots: **LF, LR, RF, RR, F, R**. Missing neighbors are represented by `(dx=0, dy=0, p=0)`. This corresponds to thesis Sections **3.1.2**, **3.1.3**, and **3.2.3**.
 
 ![Fixed-slot local traffic representation](docs/assets/fixed_slots.png)
 
-The diffusion-space feature order is:
+The 20-dimensional diffusion-space feature order is:
 
 ```text
 [vx, vy,
@@ -45,29 +72,131 @@ The diffusion-space feature order is:
  R_dx,  R_dy,  R_p]
 ```
 
-This corresponds to the compact representation described in thesis Sections 3.1.2 and 3.1.3.
+### 3.2 Diffusion-space vs downstream feature space
 
-### Factorized conditional denoiser
+The model does **not** directly generate all engineered downstream variables. Instead, it generates the compact traffic state and then applies a deterministic mapping `g(X)` into the downstream feature space, as described in thesis Sections **3.2.5–3.2.6**.
 
-The final denoiser separates **frame-level interaction modeling** from **temporal sequence denoising**. Entity attention models interactions among ego and slot tokens at each time step; the temporal U-Net then denoises the full sequence.
+![Diffusion-space and downstream-space comparison](docs/assets/feature-comparison.png)
+
+### 3.3 Downstream feature extraction
+
+The downstream representation adds ego kinematics, relative motion, geometry, TTC, and lane-gap descriptors. This is the feature space consumed by the downstream lane-change classifiers.
+
+![Downstream feature extraction pipeline](docs/assets/downstream-features.png)
+
+---
+
+## 4) Detailed denoiser architecture
+
+The final denoiser implements the factorized architecture described in thesis Section **3.3.2**. The main design idea is to separate:
+
+- **frame-level interaction modeling**, where the ego vehicle and neighbor slots interact within a single time step; and
+- **temporal denoising**, where the sequence is refined over time by a 1D temporal U-Net.
+
+### 4.1 Top-level denoiser
 
 ![Factorized conditional denoiser](docs/assets/denoiser.png)
 
-The denoiser returns three heads:
+**Inputs**
+
+- `x_t`: noisy traffic sequence of shape `[B, T, 20]`
+- `t`: diffusion step indices of shape `[B]`
+- `y`: maneuver labels of shape `[B]` or `None` for null-conditioning / CFG
+
+**Outputs**
 
 | Head | Shape | Meaning |
 |---|---:|---|
 | `eps_ego` | `[B, T, 2]` | Noise prediction for ego velocity channels. |
-| `eps_slots` | `[B, T, 6, 2]` | Noise prediction for continuous slot geometry channels. |
+| `eps_slots` | `[B, T, 6, 2]` | Noise prediction for continuous slot-geometry channels. |
 | `p_logits` | `[B, T, 6]` | Clean occupancy logits for binary slot presence. |
 
-This mirrors the mixed reverse parameterization in thesis Sections 3.3.1-3.3.3.
+This matches the mixed continuous-binary reverse parameterization described in thesis Sections **3.3.1–3.3.3**.
 
-### Repository component map
+### 4.2 Conditioning pathway
+
+Conditioning combines the diffusion step embedding and the maneuver-class embedding into a global conditioning vector `c`, which modulates the tokenizer and temporal U-Net through **FiLM**. During training, label dropout enables **classifier-free guidance (CFG)**, consistent with thesis Section **3.3.2**.
+
+![Conditioning pathway](docs/assets/conditioning.png)
+
+Concretely, the denoiser uses:
+
+- a **sinusoidal time-step embedding**,
+- a **learned class embedding** for `{lane-keeping, right-LC, left-LC}`,
+- a **null label** for CFG,
+- a **conditioning MLP** to produce the global vector `c`, and
+- **FiLM scale-and-shift modulation** inside attention and residual blocks.
+
+### 4.3 Tokenization and frame-level entity attention
+
+Each frame is decomposed into one **ego token** and six **slot tokens**. Ego and slot states are projected separately into a shared token dimension, slot embeddings preserve slot identity, and entity attention models interactions among the seven entities within the same physical frame.
+
+![Tokenizer and entity-attention block](docs/assets/tokenization.png)
+
+This is the part of the architecture that makes the model **entity-aware** rather than treating the 20 channels as an exchangeable flat vector.
+
+### 4.4 Temporal residual block
+
+After entity attention, the tokenized frame representation is flattened along the entity axis and processed as a temporal signal by a 1D U-Net. The core residual block uses GroupNorm, SiLU, FiLM conditioning, dropout, and a residual skip path.
+
+![Temporal residual block](docs/assets/residual-block.png)
+
+### 4.5 Repository component map
+
+The following diagram summarizes how the main repository modules fit together.
 
 ![Repository component map](docs/assets/components.png)
 
-## Repository layout
+---
+
+## 5) Main thesis results
+
+The README includes the main thesis-reported results so that readers can quickly assess downstream utility and distributional fidelity without opening the thesis first. These values correspond to thesis Sections **5.1–5.3**.
+
+### 5.1 TSTR downstream evaluation (thesis Table 5.1)
+
+| Generative model | Accuracy ↑ | Macro-F1 ↑ | MCC ↑ |
+|---|---:|---:|---:|
+| TRTR reference | 80.56 | 80.41 | 70.63 |
+| Random-noise augmentation | 31.21 | 33.47 | 10.53 |
+| Unconditional temporal U-Net | 43.62 | 47.18 | 31.22 |
+| Vanilla Transformer (Uncond.) | 45.84 | 42.78 | 21.77 |
+| DATG [51] | 67.49 | 67.40 | 51.71 |
+| DATG [51] + Entity Attention | 74.28 | 74.01 | 61.67 |
+| **Proposed model** | **78.41** | **78.53** | **67.77** |
+
+**Reading the table:**
+
+- The proposed model achieves **78.53 macro-F1** in the **TSTR** setting.
+- The **TRTR** reference is **80.41 macro-F1**.
+- The remaining gap is **1.88 points**, which is the main thesis result.
+- The proposed model outperforms **DATG** by **11.13 macro-F1 points** and **DATG + Entity Attention** by **4.52 points**.
+
+### 5.2 Distributional agreement (thesis Table 5.2)
+
+| Variable | Norm. Wass. ↓ | KS ↓ | Variable | Norm. Wass. ↓ | KS ↓ |
+|---|---:|---:|---|---:|---:|
+| `vx` | 0.10 | 0.0647 | `ΔxRR` | 0.36 | 0.1473 |
+| `vy` | 0.17 | 0.0624 | `ΔyRR` | 0.12 | 0.0624 |
+| `ΔxLF` | 0.28 | 0.1126 | `pRR` | 0.05 | 0.0117 |
+| `ΔyLF` | 0.08 | 0.0814 | `ΔxF` | 0.31 | 0.0984 |
+| `pLF` | 0.11 | 0.0286 | `ΔyF` | 0.36 | 0.1095 |
+| `ΔxLR` | 0.29 | 0.1081 | `pF` | 0.51 | 0.1849 |
+| `ΔyLR` | 0.17 | 0.0433 | `ΔxR` | 0.29 | 0.0911 |
+| `pLR` | 0.05 | 0.0152 | `ΔyR` | 0.34 | 0.1083 |
+| `ΔxRF` | 0.38 | 0.1495 | `pR` | 0.49 | 0.1781 |
+| `ΔyRF` | 0.01 | 0.0710 | **Median** | **0.225** | **0.0863** |
+| `pRF` | 0.06 | 0.0174 | **Mean** | **0.2265** | **0.0873** |
+
+**Reading the table:**
+
+- Most diffusion-space channels show good agreement between real and synthetic data.
+- The largest discrepancies occur in sparse occupancy-related channels, especially `pF` and `pR`, which is also discussed in thesis Section **6.2**.
+- Distributional matching is treated as a **supporting diagnostic**, while **TSTR utility** is the primary evaluation criterion.
+
+---
+
+## 6) Repository layout
 
 ```text
 .
@@ -100,7 +229,9 @@ Directory-specific explanations are available in:
 - [`utils/README.md`](utils/README.md)
 - [`datasets-files/README.md`](datasets-files/README.md)
 
-## Data contract
+---
+
+## 7) Data contract
 
 The code expects the raw NGSIM CSV at:
 
@@ -118,7 +249,9 @@ The thesis uses the NGSIM I-80 subset, a sampling interval of `0.1 s`, observati
 
 Large raw datasets, generated `.npz` caches, model checkpoints, logs, and W&B artifacts should not be committed. See [`datasets-files/README.md`](datasets-files/README.md) and [`.gitignore`](.gitignore).
 
-## Installation
+---
+
+## 8) Installation
 
 ### 1. Create an environment
 
@@ -153,13 +286,11 @@ runner:
     downstream: true
 ```
 
-The repository configuration is the executable source of truth. The thesis reports a final diffusion setup in Section 4.3; if a published experiment must be reproduced exactly, confirm that the runtime values in `config.yaml` match that table before training.
+The repository configuration is the executable source of truth. The thesis reports a final diffusion setup in Section **4.3**; if a published experiment must be reproduced exactly, confirm that the runtime values in `config.yaml` match that table before training.
 
-## Common workflows
+---
 
-### Build refactored NGSIM windows only
-
-Set `runner.train.synth=false` and `runner.train.downstream=false` after first construction is not currently useful because `Runner.run()` exits when both are false. The supported path is to run either synthesis or downstream training; the dataset cache is built automatically when `NgsimDataset(raw=True)` is created.
+## 9) Common workflows
 
 ### Train the diffusion model and generate synthetic data
 
@@ -213,7 +344,9 @@ runner:
 
 If a synthetic cache exists, the downstream trainer uses the synthetic cache as training data and evaluates on raw/refactored real data when the train and test dataset names match. If no synthetic cache exists, `BaseDataset` falls back to the refactored real dataset, producing a TRTR-style run.
 
-## Output artifacts
+---
+
+## 10) Output artifacts
 
 | Output | Location | Notes |
 |---|---|---|
@@ -228,7 +361,9 @@ If a synthetic cache exists, the downstream trainer uses the synthetic cache as 
 | Checkpoints | `models-checkpoints/` | Trainer-dependent checkpoint paths. |
 | Logs | `logs/` | Local logger output. |
 
-## Evaluation protocol
+---
+
+## 11) Evaluation protocol
 
 The key evaluation is **TSTR**:
 
@@ -240,9 +375,11 @@ The key evaluation is **TSTR**:
 
 The main scalar metric is **macro-F1**, because all three maneuver classes should contribute equally. The trainer also logs accuracy, balanced accuracy, weighted F1, and MCC.
 
-According to thesis Section 5.1, the proposed model reaches `78.53%` TSTR macro-F1 versus `80.41%` for the TRTR reference, a gap of `1.88` points. Treat these numbers as thesis-reported results, not automatic results from a fresh run unless the same data subset, preprocessing, configuration, and checkpoint-selection procedure are used.
+The README tables above are **thesis-reported results**. Treat them as reference values, not automatic outcomes from a fresh run unless the same data subset, preprocessing, configuration, and checkpoint-selection procedure are used.
 
-## Reproducibility notes
+---
+
+## 12) Reproducibility notes
 
 - `runner.seed` controls NumPy/PyTorch seeding through `utils/seeder.py`.
 - Dataset splits can be group-wise by `Vehicle_ID`, preventing windows from the same vehicle from crossing train/validation/test boundaries.
@@ -250,8 +387,19 @@ According to thesis Section 5.1, the proposed model reaches `78.53%` TSTR macro-
 - Synthetic generation is chunked to avoid GPU memory overflow.
 - Structural post-processing is deterministic and should be considered part of the generative pipeline.
 
-## Production-readiness boundaries
+---
 
-This codebase is research-production oriented: it has clear configuration, deterministic caches, grouped splits, explicit standardization, checkpointing, and separated training/evaluation stages. It is not a packaged library yet. Before deploying this as an installable package or CI-validated project, add automated tests around feature-shape contracts, dataset cache compatibility, post-processing invariants, and checkpoint load/save round trips.
+## 13) Production-readiness boundaries
+
+This codebase is **research-production oriented**: it has clear configuration, deterministic caches, grouped splits, explicit standardization, checkpointing, and separated training/evaluation stages. It is **not yet a packaged library**.
+
+Before deploying this as an installable package or CI-validated project, add automated tests for:
+
+- feature-shape contracts,
+- dataset cache compatibility,
+- post-processing invariants,
+- checkpoint load/save round trips,
+- trainer smoke tests, and
+- synthetic generation reproducibility checks.
 
 See [`docs/RESEARCH_PRODUCTION_CHECKLIST.md`](docs/RESEARCH_PRODUCTION_CHECKLIST.md) for the recommended hardening checklist.
