@@ -1,4 +1,4 @@
-# Conditional Diffusion for Traffic Data Synthesis and Lane-Change Prediction
+# Entity Aware Conditional Diffusion for Traffic Data Synthesis and Lane-Change Prediction
 
 Research code for **time-series entity-aware conditional diffusion for local traffic-scenario synthesis**, with downstream lane-change prediction under a **Train-on-Synthetic Test-on-Real (TSTR)** protocol.
 
