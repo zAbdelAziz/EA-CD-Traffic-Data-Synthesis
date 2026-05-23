@@ -1,0 +1,16 @@
+
+digraph G {
+  graph [rankdir=LR, bgcolor="white", pad="0.25", nodesep="0.35", ranksep="0.55"];
+  node [shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#333333", fontname="Helvetica", fontsize=11, margin="0.11,0.08"];
+  edge [color="#555555", arrowsize=0.75, fontname="Helvetica", fontsize=9];
+  x [label="x_t: [B,T,20]"];
+  split [label="split state\nego [2]\n6 slots [dx,dy,p]"];
+  tok [label="entity tokenizer\nLinear ego/slot projections\n+ learned slot embeddings"];
+  ent [label="2 x EntityAttentionBlock\nself-attention over\nego, LF, LR, RF, RR, F, R"];
+  flat [label="flatten tokens\n[B, 7*token_dim, T]"];
+  unet [label="1D temporal U-Net\nResBlocks + FiLM\nlow/mid temporal attention\nadditive skip connections"];
+  heads [label="factorized heads\neps_ego [B,T,2]\neps_slots [B,T,6,2]\np_logits [B,T,6]"];
+  c [shape=ellipse, fillcolor="#eef5ff", label="condition c\ntime embedding + class/null label\nCFG label dropout"];
+  x -> split -> tok -> ent -> flat -> unet -> heads;
+  c -> tok [style=dashed]; c -> ent [style=dashed]; c -> unet [style=dashed];
+}

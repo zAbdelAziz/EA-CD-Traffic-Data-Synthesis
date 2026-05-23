@@ -1,0 +1,23 @@
+
+digraph G {
+  graph [rankdir=TB, bgcolor="white", pad="0.25", nodesep="0.25", ranksep="0.45"];
+  node [shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#333333", fontname="Helvetica", fontsize=11, margin="0.10,0.07"];
+  edge [color="#555555", arrowsize=0.70, fontname="Helvetica", fontsize=9];
+  runner [label="Runner\nmain orchestration"];
+  cfg [label="Config\nOmegaConf YAML resolution"];
+  data [label="datasets/\nNgsimDataset + feature builders"];
+  synth [label="models/synth/\ndiffusion kernels + denoisers"];
+  trainS [label="SynthTrainer\nhybrid loss, standardization, sampling"];
+  down [label="models/downstream/\nBiGRU / Transformer-BiGRU"];
+  trainD [label="DownstreamTrainer\nfeature derivation + classification metrics"];
+  utils [label="utils/\nsplitting, metrics, logging, postprocess"];
+  runner -> cfg;
+  runner -> data;
+  runner -> synth;
+  runner -> trainS;
+  runner -> down;
+  runner -> trainD;
+  trainS -> utils;
+  trainD -> utils;
+  data -> utils;
+}

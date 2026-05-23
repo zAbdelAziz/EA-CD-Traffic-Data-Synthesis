@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite the accompanying thesis and this software repository."
+title: "Conditional Diffusion for Traffic Data Synthesis for Vehicle Lane-Change Prediction"
+authors:
+  - family-names: "Abdelaziz"
+    given-names: "Mohamed"
+type: software
+repository-code: "https://github.com/<OWNER>/<REPOSITORY>"
+abstract: "Research implementation of an entity-aware conditional diffusion model for local traffic time-series synthesis and TSTR lane-change prediction evaluation."
+keywords:
+  - synthetic traffic data
+  - conditional diffusion models
+  - lane-change prediction
+  - NGSIM
+  - time series
+license: "NOASSERTION"

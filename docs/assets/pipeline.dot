@@ -1,0 +1,16 @@
+
+digraph G {
+  graph [rankdir=LR, bgcolor="white", pad="0.25", nodesep="0.45", ranksep="0.5"];
+  node [shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#333333", fontname="Helvetica", fontsize=12, margin="0.11,0.08"];
+  edge [color="#555555", arrowsize=0.8, fontname="Helvetica", fontsize=10];
+  raw [label="Raw NGSIM CSV\nVehicle_ID, Frame_ID, Local_X/Y,\nLane_ID, Preceding, Following"];
+  prep [label="Interpolate + smooth\ncontiguous frames, Savitzky-Golay,\nrecomputed v/a/theta"];
+  diff [label="Diffusion-space windows\nX: [N, 50, 20]\n6 fixed neighbor slots"];
+  synth [label="Conditional diffusion\nMaskedGaussianDiffusion +\nFactorizedUNETDenoiser"];
+  gen [label="Synthetic windows\nclass-balanced labels\npost-processed to slot semantics"];
+  down [label="Downstream features\nXd: [N, 50, 61]\nkinematic, geometry, TTC, gaps"];
+  clf [label="Lane-change classifier\nBiGRU / Transformer-BiGRU"];
+  eval [label="TSTR evaluation\ntrain synthetic, test real\nmacro-F1, MCC, confusion"];
+  raw -> prep -> diff -> synth -> gen -> down -> clf -> eval;
+  diff -> down [label="real reference"];
+}

@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment
+.env
+.env.*
+
+# Data and generated caches
+datasets-files/raw/*.csv
+!datasets-files/raw/__init__.py
+!datasets-files/raw/_*.py
+!datasets-files/raw/README.md
+datasets-files/refactored/*.csv
+datasets-files/refactored/*.npz
+!datasets-files/refactored/__init__.py
+!datasets-files/refactored/_*.py
+!datasets-files/refactored/README.md
+datasets-files/synth/*.csv
+datasets-files/synth/*.npz
+!datasets-files/synth/__init__.py
+!datasets-files/synth/README.md
+
+# Training artifacts
+models-checkpoints/
+logs/
+wandb/
+runs/
+outputs/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
